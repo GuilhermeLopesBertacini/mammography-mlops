@@ -1,0 +1,59 @@
+target/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Data and large files
+data/
+datasets/
+*.dcm
+*.dicom
+*.raw
+*.tar.gz
+*.zip
+
+# MLflow and checkpoints
+mlruns/
+.mlflow/
+checkpoints/
+*.pth
+*.pt
+*.onnx
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

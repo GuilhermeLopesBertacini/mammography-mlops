@@ -44,9 +44,15 @@ Neste documento, analisamos as principais bases de dados públicas e acadêmicas
   * Fornece anotações no nível de lesão (Bounding Boxes para: Massa, Calcificação, Assimetria, Espessamento de Pele, Retração de Pele, Distorção Arquitetural) e no nível de exame (BI-RADS 1 a 5 e densidade ACR A a D).
 * **Desvantagens:**
   * Requer registro no PhysioNet e aprovação de credenciamento (completar o treinamento básico do CITI sobre pesquisa com seres humanos, gratuito para estudantes e pesquisadores).
-* **Acesso:**
+* **Acesso e Credenciamento:**
   * Disponível em: `https://physionet.org/content/vindr-mammo/1.0.0/`
-  * Processo: Criar conta no PhysioNet $\to$ assinar o Data Use Agreement (DUA) $\to$ submeter certificado CITI. O acesso costuma ser liberado em 48-72h.
+  * **Status:** Credenciamento aprovado.
+  * **Comando de Download Oficial:**
+    ```bash
+    wget -r -N -c -np --user guilhermelb --ask-password https://physionet.org/files/vindr-mammo/1.0.0/
+    ```
+  * **Automação via Repositório:** O repositório disponibiliza o script [`scripts/download_vindr.sh`](file:///home/guilherme/Documents/Projects/mammography-mlops/scripts/download_vindr.sh) integrado com o arquivo `.env` para carregar `PHYSIONET_USER` e `PHYSIONET_PASSWORD` automaticamente ou solicitar a senha em prompt seguro caso o campo esteja vazio.
+  * **Volume de Armazenamento Requerido:** O download completo do VinDr-Mammo (20.000 mamografias DICOM não comprimidas em alta resolução) requer aproximadamente **350 a 400 GB** de espaço em disco no sistema de arquivos do servidor de treinamento.
 
 ---
 

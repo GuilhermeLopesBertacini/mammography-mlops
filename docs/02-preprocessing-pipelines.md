@@ -25,9 +25,56 @@ Arquivos DICOM de mamografia digital (FFDM) contêm particularidades que diferem
 * Mamógrafos digitais capturam imagens em **12, 14 ou 16 bits** por pixel ($4.096$ a $65.536$ níveis de cinza), enquanto a maioria das bibliotecas de visão (OpenCV, PIL) opera por padrão em **8 bits** ($256$ níveis).
 * **Downscaling linear ingênuo para 8 bits ($I / 256$):** Destrói sutis variações de atenuação de raios-X em massas isodensas envoltas em tecido glandular fibroso.
 * **Aplicação de VOI LUT (Value of Interest Look-Up Table):**
-  Utilizar as tags DICOM de janela radiológica `Window Center (0028, 1050)` e `Window Width (0028, 1051)`:
+  A janela radiológica linear padrão mapeia a faixa dinâmica de interesse $[c - w/2, c + w/2]$ para $[0, 255]$:
   $$I_{\text{win}}(x, y) = \text{clip}\left( \frac{\text{Pixel}(x, y) - (c - 0.5)}{w - 1} + 0.5, \ 0, \ 1 \right) \times 255$$
-  onde $c = \text{Window Center}$ e $w = \text{Window Width}$. Alternativamente, quando as tags não estiverem disponíveis, aplica-se corte por percentis robustos ($p_{0.5}$ e $p_{99.5}$) para eliminar valores espúrios de saturação do sensor.
+  onde $c = \text{Window Center}$ e $w = \text{Window Width}$.
+
+### 1.3 Cálculo Dinâmico e Robusto de Window Center ($c$) e Window Width ($w$)
+
+Na ausência das tags `(0028, 1050)` e `(0028, 1051)` — ou quando a janela do fabricante é genérica demais —, calcular $c$ e $w$ sobre a matriz inteira é um erro grave: o fundo (ar) e a gordura subcutânea/retromamária formam modas dominantes de baixa atenuação que puxam o centro para baixo, comprimindo o contraste do tecido fibroglandular e das massas tumorais.
+
+> [!NOTE]
+> Mamografia é uma projeção 2D de atenuação planar de raios-X, não Tomografia Computadorizada (TC). Portanto, os valores nativos dos pixels não são rigorosamente calibrados em Unidades Hounsfield (onde água $= 0$, ar $= -1000$ e gordura $\approx -120$ a $-90$ HU), mas seguem curvas de atenuação análogas em níveis de cinza brutos ($GL$). A mesma lógica de filtragem tecidual aplica-se isolando as densidades radiológicas relativas.
+
+#### Algoritmo de Cálculo Focado no Tecido de Interesse:
+
+```text
+[Matriz Bruta 16-bit] ──► [Máscara Parênquima M(x,y)] ──► [Vetor P_parenquima]
+                                                                  │
+              ┌───────────────────────────────────────────────────┘
+              ▼
+   [Filtragem da Moda de Gordura / Limiar Inferior]
+              │
+              ▼ [Subconjunto P_denso]
+   [Percentis Robustos p_low (ex: 2%) e p_high (ex: 99%)]
+              │
+              ├─► Window Center: c = (p_high + p_low) / 2
+              └─► Window Width:  w = p_high - p_low
+```
+
+1. **Segmentação da Região Anatômica:**
+   Calcula-se uma máscara booleana $M(x, y)$ da silhueta mamária (descartando o fundo de ar onde $\text{Pixel}(x, y) \le \text{Threshold}_{\text{ar}}$).
+   $$P_{\text{mama}} = \{ \text{Pixel}(x, y) \mid M(x, y) = 1 \}$$
+
+2. **Identificação e Supressão da Componente de Gordura:**
+   No histograma de $P_{\text{mama}}$, o tecido adiposo forma o primeiro pico (moda) proeminente de menor densidade. Duas estratégias são empregadas:
+   * **Abordagem por Moda Adiposa ($\mu_{\text{fat}}, \sigma_{\text{fat}}$):**
+     Localiza-se a moda do primeiro pico do histograma $\mu_{\text{fat}}$ e define-se um limiar de corte inferior:
+     $$T_{\text{fat}} = \mu_{\text{fat}} + k \cdot \sigma_{\text{fat}} \quad (k \in [1.0, 1.5])$$
+     Pixels com valor abaixo de $T_{\text{fat}}$ são descartados do cálculo dos parâmetros de janela.
+   * **Abordagem por Percentil de Descarte de Gordura:**
+     Como a mama contém entre 40% e 70% de tecido adiposo dependendo da densidade BIRADS (A a D), estabelece-se um piso $p_{\text{fat}} = \text{Percentil}(P_{\text{mama}}, \alpha)$, com $\alpha \in [20\%, 40\%]$.
+
+3. **Derivação de $c$ e $w$ sobre o Tecido Fibroglandular Restante ($P_{\text{denso}}$):**
+   Com o vetor filtrado $P_{\text{denso}} = \{ v \in P_{\text{mama}} \mid v \ge T_{\text{fat}} \}$, calculam-se os percentis de cauda para suprimir ruídos espúrios e saturação:
+   $$V_{\text{min}} = \text{Percentil}(P_{\text{denso}}, \ 1.0)$$
+   $$V_{\text{max}} = \text{Percentil}(P_{\text{denso}}, \ 99.5)$$
+
+   Os parâmetros da janela radiológica são formalizados por:
+   $$w = V_{\text{max}} - V_{\text{min}}$$
+   $$c = \frac{V_{\text{max}} + V_{\text{min}}}{2}$$
+
+Esse cálculo garante que 100% dos $256$ níveis de cinza da imagem convertida (8 bits) sejam dedicados a discriminar variações de densidade do parênquima glandular e nódulos, impedindo que ar e gordura consumam faixa dinâmica útil.
 
 ---
 

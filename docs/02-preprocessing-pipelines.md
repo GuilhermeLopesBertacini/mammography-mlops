@@ -59,8 +59,13 @@ Na ausência das tags `(0028, 1050)` e `(0028, 1051)` — ou quando a janela do 
 2. **Identificação e Supressão da Componente de Gordura:**
    No histograma de $P_{\text{mama}}$, o tecido adiposo forma o primeiro pico (moda) proeminente de menor densidade. Duas estratégias são empregadas:
    * **Abordagem por Moda Adiposa ($\mu_{\text{fat}}, \sigma_{\text{fat}}$):**
-     Localiza-se a moda do primeiro pico do histograma $\mu_{\text{fat}}$ e define-se um limiar de corte inferior:
-     $$T_{\text{fat}} = \mu_{\text{fat}} + k \cdot \sigma_{\text{fat}} \quad (k \in [1.0, 1.5])$$
+     O histograma global da mama é uma **mistura bimodal (Gaussian Mixture Model - GMM)**: a distribuição normal da gordura $\mathcal{N}(\mu_{\text{fat}}, \sigma_{\text{fat}}^2)$ sobrepõe-se à distribuição do parênquima $\mathcal{N}(\mu_{\text{gland}}, \sigma_{\text{gland}}^2)$.
+     Define-se o limiar de corte inferior por:
+     $$T_{\text{fat}} = \mu_{\text{fat}} + k \cdot \sigma_{\text{fat}}$$
+     * **Por que $k \in [1.0, 1.5]$ e não $k = 3.0$?**
+       * Se $k = 3.0$, elimina-se teoricamente $99.7\%$ da distribuição normal da gordura isolada. Porém, as distribuições de gordura e tecido glandular não são separadas por um vale nulo; há uma **área de sobreposição anatômica real** (tecido fibroglandular de baixa densidade, ductos e lesões incipientes imersas em estroma adiposo).
+       * Com $k = 3.0$, o limiar invade profundamente o pico do tecido fibroglandular, descartando lesões isodensas.
+       * Com $k \in [1.0, 1.5]$, como o corte é unilateral à direita da média, remove-se toda a cauda esquerda e o centro da gordura ($\ge 84.1\%$ a $93.3\%$ do tecido puramente adiposo), fixando o ponto de operação exatamente na região de transição com máxima especificidade, sem suprimir parênquima útil.
      Pixels com valor abaixo de $T_{\text{fat}}$ são descartados do cálculo dos parâmetros de janela.
    * **Abordagem por Percentil de Descarte de Gordura:**
      Como a mama contém entre 40% e 70% de tecido adiposo dependendo da densidade BIRADS (A a D), estabelece-se um piso $p_{\text{fat}} = \text{Percentil}(P_{\text{mama}}, \alpha)$, com $\alpha \in [20\%, 40\%]$.

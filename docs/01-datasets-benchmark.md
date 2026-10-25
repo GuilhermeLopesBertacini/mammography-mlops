@@ -51,8 +51,8 @@ Neste documento, analisamos as principais bases de dados públicas e acadêmicas
     ```bash
     wget -r -N -c -np --user guilhermelb --ask-password https://physionet.org/files/vindr-mammo/1.0.0/
     ```
-  * **Automação via Repositório:** O repositório disponibiliza o script [`scripts/download_vindr.sh`](file:///home/guilherme/Documents/Projects/mammography-mlops/scripts/download_vindr.sh) integrado com o arquivo `.env` para carregar `PHYSIONET_USER` e `PHYSIONET_PASSWORD` automaticamente ou solicitar a senha em prompt seguro caso o campo esteja vazio.
-  * **Volume de Armazenamento Requerido:** O download completo do VinDr-Mammo (20.000 mamografias DICOM não comprimidas em alta resolução) requer aproximadamente **350 a 400 GB** de espaço em disco no sistema de arquivos do servidor de treinamento.
+  * **Automação via Repositório:** O repositório disponibiliza o script `scripts/download_vindr.sh` integrado com o arquivo `.env` para carregar `PHYSIONET_USER` e `PHYSIONET_PASSWORD` automaticamente ou solicitar a senha em prompt seguro caso o campo esteja vazio.
+  * **Volume de Armazenamento Requerido:** O download completo do VinDr-Mammo (20.000 mamografias DICOM não comprimidas em alta resolução) requer **337.8 GB** de espaço em disco no sistema de arquivos do servidor de treinamento.
 
 ---
 

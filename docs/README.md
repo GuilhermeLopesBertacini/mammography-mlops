@@ -46,5 +46,10 @@ Para evitar desenvolvimento ad-hoc e escolhas arbitrárias de bibliotecas e algo
    * Comparativo controlado de candidatos clássicos vs deep learning para pré-processamento.
    * Protocolo de EDA, modelagem, tiling e experimentação no MLflow.
 
-8. [**ADRs - Architectural Decision Records**](adr/)
+8. [**08. Análise Exploratória e Profiling de Dados: VinDr-Mammo**](08-vindr-eda-profiling.md)
+   * Profiling completo dos metadados DICOM e anotações do VinDr-Mammo.
+   * Alerta sobre a fotometria de 19% dos casos (Planmed MONOCHROME1).
+   * Estatísticas geométricas das Bounding Boxes e prova matemática do colapso em 640px.
+
+9. [**ADRs - Architectural Decision Records**](adr/)
    * Registro histórico de decisões definitivas tomadas durante o projeto.

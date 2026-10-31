@@ -41,5 +41,10 @@ Para evitar desenvolvimento ad-hoc e escolhas arbitrárias de bibliotecas e algo
    * Estratégia de rastreamento remoto via servidor caseiro MLflow exposto via túnel Cloudflare.
    * Pipeline de ingestão, particionamento estratificado e prevenção de *data leakage* por paciente.
 
-7. [**ADRs - Architectural Decision Records**](adr/)
+7. [**07. Roadmap de Execução: Da Ingestão ao Treinamento**](07-execution-roadmap.md)
+   * Plano de ação cronológico passo a passo pós-download do VinDr-Mammo.
+   * Comparativo controlado de candidatos clássicos vs deep learning para pré-processamento.
+   * Protocolo de EDA, modelagem, tiling e experimentação no MLflow.
+
+8. [**ADRs - Architectural Decision Records**](adr/)
    * Registro histórico de decisões definitivas tomadas durante o projeto.

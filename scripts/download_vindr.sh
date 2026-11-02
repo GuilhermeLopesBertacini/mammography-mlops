@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Script para download do dataset VinDr-Mammo via PhysioNet
+# Script para download do dataset VinDr-Mammo (Arquivo ZIP Oficial: 50.7 GB)
 # Carrega credenciais do arquivo .env
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,24 +25,31 @@ fi
 DEST_DIR="${1:-$PROJECT_ROOT/data/raw/vindr-mammo}"
 mkdir -p "$DEST_DIR"
 
-URL="${PHYSIONET_VINDR_URL:-https://physionet.org/files/vindr-mammo/1.0.0/}"
+ZIP_FILENAME="vindr-mammo-a-large-scale-benchmark-dataset-for-computer-aided-detection-and-diagnosis-in-full-field-digital-mammography-1.0.0.zip"
+ZIP_URL="${PHYSIONET_VINDR_ZIP_URL:-https://physionet.org/static/published-projects/vindr-mammo/$ZIP_FILENAME}"
 
-echo "Iniciando download do VinDr-Mammo para: $DEST_DIR"
-echo "Usuário PhysioNet: $PHYSIONET_USER"
+echo "=========================================================="
+echo "Download Oficial do VinDr-Mammo (Arquivo ZIP - 50.7 GB)"
+echo "Destino: $DEST_DIR"
+echo "Usuário: $PHYSIONET_USER"
+echo "=========================================================="
+
+cd "$DEST_DIR"
 
 if [ -n "${PHYSIONET_PASSWORD:-}" ]; then
-    wget -r -N -c -np \
+    wget -c \
         --user="$PHYSIONET_USER" \
         --password="$PHYSIONET_PASSWORD" \
-        -P "$DEST_DIR" \
-        "$URL"
+        "$ZIP_URL"
 else
     echo "PHYSIONET_PASSWORD não preenchido no .env. Solicitando senha interativamente:"
-    wget -r -N -c -np \
+    wget -c \
         --user="$PHYSIONET_USER" \
         --ask-password \
-        -P "$DEST_DIR" \
-        "$URL"
+        "$ZIP_URL"
 fi
 
-echo "Download concluído."
+echo ""
+echo "Download do arquivo ZIP concluído com sucesso em $DEST_DIR/$ZIP_FILENAME"
+echo "Para descompactar (expandirá para ~337 GB), execute:"
+echo "  unzip -q $DEST_DIR/$ZIP_FILENAME -d $DEST_DIR"

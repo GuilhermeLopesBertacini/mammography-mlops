@@ -21,6 +21,7 @@ from src.infrastructure.config import (
     TrainerConfig,
 )
 from src.infrastructure.datasets.vindr_datamodule import VinDrLightningDataModule
+from src.infrastructure.evaluation import DetectionReportCallback
 from src.infrastructure.models import CascadeRCNNLightningModule, TimmFPNBackbone
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,7 @@ def main(cfg: DictConfig) -> None:
         ),
         EarlyStopping(monitor="val/map_50", mode="max", patience=5),
         LearningRateMonitor(logging_interval="step"),
+        DetectionReportCallback(),
     ]
 
     trainer = L.Trainer(

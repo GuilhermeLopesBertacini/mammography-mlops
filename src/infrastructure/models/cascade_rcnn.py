@@ -8,7 +8,6 @@ import lightning as L
 import torch
 import torch.nn.functional as F
 from torch import nn
-from torchmetrics.detection import MeanAveragePrecision
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor, TwoMLPHead
 from torchvision.models.detection.image_list import ImageList
 from torchvision.models.detection.roi_heads import RoIHeads, fastrcnn_loss
@@ -17,6 +16,11 @@ from torchvision.models.detection.transform import GeneralizedRCNNTransform
 from torchvision.ops import MultiScaleRoIAlign
 from torchvision.ops import boxes as box_ops
 
+from src.infrastructure.evaluation.detection_metrics import (
+    ConfusionMatrix,
+    DetectionMetrics,
+    clinical_operating_point,
+)
 from src.infrastructure.models.backbone import TimmFPNBackbone
 
 
@@ -272,7 +276,10 @@ class CascadeRCNNLightningModule(L.LightningModule):
             max_size=image_size,
         )
         self._assert_no_batchnorm()
-        self.val_map = MeanAveragePrecision(iou_type="bbox", class_metrics=False)
+        class_names = [f"class_{i}" for i in range(1, num_classes)] if num_classes > 2 else ["lesion"]
+        self.val_metrics = DetectionMetrics(class_names=class_names, label_offset=1)
+        self.val_confusion = ConfusionMatrix(num_classes=num_classes - 1, label_offset=1)
+        self.last_val_result: dict[str, Any] | None = None
 
     def _assert_no_batchnorm(self) -> None:
         """Garante invariante arquitetural: nenhuma camada BatchNorm ativa no detector."""
@@ -298,6 +305,11 @@ class CascadeRCNNLightningModule(L.LightningModule):
             self.log(f"train/{key}", val, batch_size=batch_size)
         return total_loss
 
+    def on_validation_epoch_start(self) -> None:
+        self.val_metrics.reset()
+        self.val_confusion.reset()
+        self.last_val_result = None
+
     def validation_step(
         self,
         batch: tuple[list[torch.Tensor], list[dict[str, torch.Tensor]]],
@@ -305,14 +317,26 @@ class CascadeRCNNLightningModule(L.LightningModule):
     ) -> None:
         images, targets = batch
         detections, _ = self.detector(images)
-        self.val_map.update(detections, targets)
+        self.val_metrics.update(detections, targets)
+        self.val_confusion.update(detections, targets)
 
     def on_validation_epoch_end(self) -> None:
-        metrics = self.val_map.compute()
-        self.log("val/map", metrics["map"], prog_bar=True)
-        self.log("val/map_50", metrics["map_50"], prog_bar=True)
-        self.log("val/map_75", metrics["map_75"])
-        self.val_map.reset()
+        result = self.val_metrics.compute()
+        self.last_val_result = result
+        clinical = clinical_operating_point(result, min_recall=0.90)
+
+        self.log("val/map", result["mAP50-95"], prog_bar=True)
+        self.log("val/map_50", result["mAP50"], prog_bar=True)
+        self.log("val/map_75", result["mAP75"])
+        self.log("val/precision", result["precision"])
+        self.log("val/recall", result["recall"])
+        self.log("val/f1", result["f1"], prog_bar=True)
+        self.log("val/best_conf", result["best_conf"])
+        self.log("val/fp_per_image", result["fp_per_image"])
+        self.log("val/background_fp", float(self.val_confusion.background_fp))
+        self.log("val/missed", float(self.val_confusion.missed))
+        self.log("val/conf_at_recall_90", clinical["conf"])
+        self.log("val/precision_at_recall_90", clinical["precision"])
 
     def configure_optimizers(self) -> dict[str, Any]:
         optimizer = torch.optim.AdamW(

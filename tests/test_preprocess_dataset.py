@@ -152,3 +152,19 @@ def test_use_case_enforces_study_split_excludes_birads345_negatives_and_is_idemp
         max_workers=1,
     )
     assert len(preprocessor.calls) == 0
+
+    # Terceira execução: simula _meta.json corrompido (0 bytes) e valida auto-recuperação
+    first_meta = next((cache_dir / "patches").rglob("_meta.json"))
+    first_meta.write_text("", encoding="utf-8")
+    preprocessor.calls.clear()
+    use_case.execute(
+        raw_images_dir=raw_dir,
+        annotations_dir=tmp_path,
+        cache_dir=cache_dir,
+        val_fraction=0.5,
+        seed=42,
+        max_negative_studies=1,
+        max_workers=1,
+    )
+    assert len(preprocessor.calls) == 1
+    assert first_meta.stat().st_size > 0

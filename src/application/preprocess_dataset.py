@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
 import random
 from collections.abc import Sequence
@@ -21,6 +22,8 @@ from src.domain.entities import MammogramImage, PatientStudy
 from src.domain.enums import DatasetSplit, PhotometricInterpretation
 from src.ports.dataset_reader import DatasetReaderPort
 from src.ports.image_preprocessor import ImagePreprocessorPort
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -58,9 +61,12 @@ def _write_png_atomic(rgb_array: npt.NDArray[np.uint8], target_path: Path) -> No
 
 
 def _write_json_atomic(payload: object, target_path: Path) -> None:
-    """Grava JSON em arquivo temporário e substitui atomicamente."""
+    """Grava JSON com fsync e substituição atômica para evitar arquivo 0-byte em queda."""
     tmp_path = target_path.with_suffix(".json.tmp")
-    tmp_path.write_text(json.dumps(payload), encoding="utf-8")
+    with tmp_path.open("w", encoding="utf-8") as fp:
+        json.dump(payload, fp)
+        fp.flush()
+        os.fsync(fp.fileno())
     os.replace(tmp_path, target_path)
 
 
@@ -69,10 +75,15 @@ def _process_single_image(task: _ImageTask) -> list[PatchRecord]:
     image_cache_dir = task.cache_dir / "patches" / task.study_id / task.image_id
     meta_path = image_cache_dir / "_meta.json"
 
-    # Idempotência: se _meta.json existe, todos os PNGs dessa imagem já foram gravados atomicamente
+    # Idempotência auto-recuperável: se _meta.json existir e for válido, reutiliza;
+    # se estiver vazio/corrompido (ex: queda de energia em ext4), reprocessa a imagem.
     if meta_path.is_file():
-        raw_records = json.loads(meta_path.read_text(encoding="utf-8"))
-        return [PatchRecord(**item) for item in raw_records]
+        try:
+            raw_records = json.loads(meta_path.read_text(encoding="utf-8"))
+            if isinstance(raw_records, list) and raw_records:
+                return [PatchRecord(**item) for item in raw_records]
+        except (json.JSONDecodeError, TypeError, KeyError, ValueError):
+            logger.warning("Marcador corrompido ou vazio em %s; reprocessando imagem.", meta_path)
 
     image_cache_dir.mkdir(parents=True, exist_ok=True)
     result = task.preprocessor.preprocess_dicom(task.dicom_path, task.photometric)

@@ -32,7 +32,7 @@ env.bak/
 venv.bak/
 
 # Data and large files
-data/
+/data/
 datasets/
 *.dcm
 *.dicom

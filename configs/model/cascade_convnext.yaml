@@ -1,0 +1,16 @@
+# Fase 1: Detecção binária (0 = __background__, 1 = lesion)
+num_classes: 2
+backbone_name: convnext_base.fb_in22k_ft_in1k_384
+pretrained: true
+fpn_out_channels: 256
+# Limiares de IoU dos 3 estágios do Cascade R-CNN
+cascade_iou_thresholds:
+  - 0.5
+  - 0.6
+  - 0.7
+# Normalização agnóstica a micro-batch (proibido BatchNorm2d)
+norm_type: group_norm
+num_groups: 32
+learning_rate: 1.0e-4
+weight_decay: 1.0e-4
+warmup_epochs: 1

@@ -1,0 +1,16 @@
+defaults:
+  - data: vindr
+  - preprocessing: default
+  - model: cascade_convnext
+  - trainer: default
+  - tracking: mlflow
+  - _self_
+
+seed: 42
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}

@@ -1,0 +1,7 @@
+experiment_name: vindr-mammo-cascade-convnext
+run_name: null
+log_model: false
+tags:
+  dataset: vindr-mammo
+  task: binary-lesion-detection
+  backbone: convnext_base

@@ -1,0 +1,12 @@
+raw_images_dir: /dados/vindr-mammo/vindr-mammo-a-large-scale-benchmark-dataset-for-computer-aided-detection-and-diagnosis-in-full-field-digital-mammography-1.0.0/images
+annotations_csv: /dados/vindr-mammo/vindr-mammo-a-large-scale-benchmark-dataset-for-computer-aided-detection-and-diagnosis-in-full-field-digital-mammography-1.0.0/finding_annotations.csv
+cache_dir: /dados/vindr-mammo/vindr-cache
+val_fraction: 0.15
+positive_negative_ratio: 1.0
+max_negative_studies: 500
+exclude_birads_from_negatives:
+  - "BI-RADS 3"
+  - "BI-RADS 4"
+  - "BI-RADS 5"
+num_workers: 4
+pin_memory: true

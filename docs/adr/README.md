@@ -7,3 +7,4 @@ Este diretório documenta as decisões arquiteturais fundamentais tomadas ao lon
 ## 📋 Lista de Decisões
 
 * [**ADR-0001: Adoção de Monorepo Modular e Arquitetura Hexagonal (Ports and Adapters)**](0001-repository-architecture-and-mlops-paradigm.md)
+* [**ADR-0002: Stack de Treinamento (ConvNeXt + Cascade R-CNN), Estratégia de Dados e Observabilidade**](0002-training-pipeline-convnext-cascade-and-data-strategy.md)

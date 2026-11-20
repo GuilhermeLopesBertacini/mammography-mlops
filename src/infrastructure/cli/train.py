@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 import hydra
 import lightning as L
@@ -37,6 +38,17 @@ def _load_dotenv(env_path: Path) -> None:
             continue
         key, val = line.split("=", 1)
         os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+
+
+def _flatten_dict(data: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    flat: dict[str, Any] = {}
+    for key, value in data.items():
+        full_key = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            flat.update(_flatten_dict(value, full_key))
+        else:
+            flat[full_key] = value
+    return flat
 
 
 def _validate_config(cfg: DictConfig) -> PipelineConfig:
@@ -77,13 +89,16 @@ def main(cfg: DictConfig) -> None:
         out_channels=pipeline.model.fpn_out_channels,
         norm_type=pipeline.model.norm_type,
         num_groups=pipeline.model.num_groups,
+        drop_path_rate=pipeline.model.drop_path_rate,
     )
 
     model = CascadeRCNNLightningModule(
         backbone=backbone,
         num_classes=pipeline.model.num_classes,
         cascade_iou_thresholds=pipeline.model.cascade_iou_thresholds,
+        stage_loss_weights=pipeline.model.stage_loss_weights,
         learning_rate=pipeline.model.learning_rate,
+        backbone_lr_scale=pipeline.model.backbone_lr_scale,
         weight_decay=pipeline.model.weight_decay,
         warmup_epochs=pipeline.model.warmup_epochs,
         image_size=pipeline.preprocessing.patch_size,
@@ -97,15 +112,23 @@ def main(cfg: DictConfig) -> None:
         log_model=pipeline.tracking.log_model,
         tags=pipeline.tracking.tags,
     )
+    try:
+        flat_params = _flatten_dict(pipeline.model_dump(mode="json"))
+        flat_params["trainer.effective_batch_size"] = pipeline.trainer.effective_batch_size
+        mlf_logger.log_hyperparams(flat_params)
+    except Exception as exc:  # noqa: BLE001 - falha no tracking não deve abortar treino
+        logger.warning("Falha ao registrar hiperparâmetros completos no MLflow: %s", exc)
 
     callbacks = [
         ModelCheckpoint(
             monitor="val/map_50",
             mode="max",
             save_top_k=2,
-            filename="cascade-{epoch:02d}-{val/map_50:.4f}",
+            save_last=True,
+            auto_insert_metric_name=False,
+            filename="cascade-ep{epoch:02d}",
         ),
-        EarlyStopping(monitor="val/map_50", mode="max", patience=5),
+        EarlyStopping(monitor="val/map_50", mode="max", patience=6),
         LearningRateMonitor(logging_interval="step"),
         DetectionReportCallback(),
     ]
@@ -123,12 +146,14 @@ def main(cfg: DictConfig) -> None:
     )
 
     logger.info(
-        "Iniciando treinamento | backbone=%s | effective_batch=%d | precision=%s",
+        "Iniciando treinamento | backbone=%s | backbone_lr=%.1e | head_lr=%.1e | effective_batch=%d | precision=%s",
         pipeline.model.backbone_name,
+        pipeline.model.learning_rate * pipeline.model.backbone_lr_scale,
+        pipeline.model.learning_rate,
         pipeline.trainer.effective_batch_size,
         pipeline.trainer.precision,
     )
-    trainer.fit(model, datamodule=datamodule)
+    trainer.fit(model, datamodule=datamodule, ckpt_path=pipeline.trainer.ckpt_path)
 
 
 if __name__ == "__main__":

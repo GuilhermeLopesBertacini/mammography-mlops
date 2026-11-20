@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import lightning as L
@@ -23,6 +24,8 @@ from src.infrastructure.evaluation.detection_metrics import (
 )
 from src.infrastructure.models.backbone import TimmFPNBackbone
 
+logger = logging.getLogger(__name__)
+
 
 class CascadeRoIHeads(nn.Module):
     """Encadeia K estágios sequenciais de RoIHeads com limiares crescentes de IoU."""
@@ -33,6 +36,7 @@ class CascadeRoIHeads(nn.Module):
         in_channels: int,
         num_classes: int,
         iou_thresholds: tuple[float, ...] = (0.5, 0.6, 0.7),
+        stage_loss_weights: tuple[float, ...] = (1.0, 0.5, 0.25),
         representation_size: int = 1024,
         batch_size_per_image: int = 512,
         positive_fraction: float = 0.25,
@@ -41,12 +45,17 @@ class CascadeRoIHeads(nn.Module):
         detections_per_img: int = 100,
     ) -> None:
         super().__init__()
+        if len(stage_loss_weights) != len(iou_thresholds):
+            raise ValueError("stage_loss_weights e iou_thresholds devem ter o mesmo tamanho.")
+
         self.num_stages = len(iou_thresholds)
+        self.stage_loss_weights = stage_loss_weights
         self.stages = nn.ModuleList()
 
         resolution = box_roi_pool.output_size[0]
         for idx, thr in enumerate(iou_thresholds):
-            scale = 2**idx
+            # Pesos canônicos de Cai & Vasconcelos (CVPR 2018): 10/20/30 e 5/10/15
+            scale = float(idx + 1)
             reg_weights = (10.0 * scale, 10.0 * scale, 5.0 * scale, 5.0 * scale)
             box_head = TwoMLPHead(in_channels * (resolution**2), representation_size)
             box_predictor = FastRCNNPredictor(representation_size, num_classes)
@@ -77,7 +86,6 @@ class CascadeRoIHeads(nn.Module):
         """Decodifica deltas do estágio atual para alimentar o próximo estágio (sem gradiente)."""
         with torch.no_grad():
             pred_boxes = stage.box_coder.decode(box_regression.detach(), proposals)
-            # Seleciona a classe foreground mais provável para cada proposta
             fg_classes = class_logits.detach()[:, 1:].argmax(dim=1) + 1
             row_indices = torch.arange(pred_boxes.shape[0], device=pred_boxes.device)
             chosen_boxes = pred_boxes[row_indices, fg_classes]
@@ -119,8 +127,9 @@ class CascadeRoIHeads(nn.Module):
                 loss_cls, loss_box = fastrcnn_loss(
                     class_logits, box_regression, labels, reg_targets
                 )
-                losses[f"stage_{idx}_loss_classifier"] = loss_cls
-                losses[f"stage_{idx}_loss_box_reg"] = loss_box
+                weight = self.stage_loss_weights[idx]
+                losses[f"stage_{idx}_loss_classifier"] = loss_cls * weight
+                losses[f"stage_{idx}_loss_box_reg"] = loss_box * weight
 
                 if idx < self.num_stages - 1:
                     curr_proposals = self._refine_proposals(
@@ -133,7 +142,6 @@ class CascadeRoIHeads(nn.Module):
                     )
             return [], losses
 
-        # Inferência: refina propostas em cascata e combina probabilidades dos estágios
         curr_proposals = proposals
         stage_probs: list[torch.Tensor] = []
         last_box_reg: torch.Tensor | None = None
@@ -183,12 +191,12 @@ class CascadeRCNNDetector(nn.Module):
         backbone: TimmFPNBackbone,
         num_classes: int = 2,
         cascade_iou_thresholds: tuple[float, ...] = (0.5, 0.6, 0.7),
+        stage_loss_weights: tuple[float, ...] = (1.0, 0.5, 0.25),
         min_size: int = 1024,
         max_size: int = 1024,
     ) -> None:
         super().__init__()
         self.backbone = backbone
-        # Albumentations já normaliza e os patches já chegam em 1024x1024
         self.transform = GeneralizedRCNNTransform(
             min_size=min_size,
             max_size=max_size,
@@ -196,7 +204,6 @@ class CascadeRCNNDetector(nn.Module):
             image_std=[1.0, 1.0, 1.0],
         )
 
-        # 5 níveis na FPN (4 estágios do ConvNeXt + LastLevelMaxPool)
         anchor_generator = AnchorGenerator(
             sizes=((16, 32), (32, 64), (64, 128), (128, 256), (256, 512)),
             aspect_ratios=((0.5, 1.0, 2.0),) * 5,
@@ -227,6 +234,7 @@ class CascadeRCNNDetector(nn.Module):
             in_channels=backbone.out_channels,
             num_classes=num_classes,
             iou_thresholds=cascade_iou_thresholds,
+            stage_loss_weights=stage_loss_weights,
         )
 
     def forward(
@@ -241,7 +249,9 @@ class CascadeRCNNDetector(nn.Module):
         features = self.backbone(image_list.tensors)
         proposals, rpn_losses = self.rpn(image_list, features, targets)
         detections, roi_losses = self.roi_heads(features, proposals, image_list.image_sizes, targets)
-        detections = self.transform.postprocess(detections, image_list.image_sizes, original_image_sizes)
+        detections = self.transform.postprocess(
+            detections, image_list.image_sizes, original_image_sizes
+        )
 
         losses: dict[str, torch.Tensor] = {}
         losses.update(rpn_losses)
@@ -250,28 +260,34 @@ class CascadeRCNNDetector(nn.Module):
 
 
 class CascadeRCNNLightningModule(L.LightningModule):
-    """Módulo PyTorch Lightning para treino, validação (mAP) e otimização."""
+    """Módulo PyTorch Lightning para treino, validação (mAP/P/R/F1) e otimização diferencial."""
 
     def __init__(
         self,
         backbone: TimmFPNBackbone,
         num_classes: int = 2,
         cascade_iou_thresholds: tuple[float, ...] = (0.5, 0.6, 0.7),
+        stage_loss_weights: tuple[float, ...] = (1.0, 0.5, 0.25),
         learning_rate: float = 1e-4,
-        weight_decay: float = 1e-4,
+        backbone_lr_scale: float = 0.2,
+        weight_decay: float = 0.05,
         warmup_epochs: int = 1,
         image_size: int = 1024,
+        max_visual_samples: int = 6,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=["backbone"])
         self.learning_rate = learning_rate
+        self.backbone_lr_scale = backbone_lr_scale
         self.weight_decay = weight_decay
         self.warmup_epochs = warmup_epochs
+        self.max_visual_samples = max_visual_samples
 
         self.detector = CascadeRCNNDetector(
             backbone=backbone,
             num_classes=num_classes,
             cascade_iou_thresholds=cascade_iou_thresholds,
+            stage_loss_weights=stage_loss_weights,
             min_size=image_size,
             max_size=image_size,
         )
@@ -280,6 +296,9 @@ class CascadeRCNNLightningModule(L.LightningModule):
         self.val_metrics = DetectionMetrics(class_names=class_names, label_offset=1)
         self.val_confusion = ConfusionMatrix(num_classes=num_classes - 1, label_offset=1)
         self.last_val_result: dict[str, Any] | None = None
+        self.val_visual_samples: list[
+            tuple[torch.Tensor, dict[str, torch.Tensor], dict[str, torch.Tensor]]
+        ] = []
 
     def _assert_no_batchnorm(self) -> None:
         """Garante invariante arquitetural: nenhuma camada BatchNorm ativa no detector."""
@@ -309,6 +328,7 @@ class CascadeRCNNLightningModule(L.LightningModule):
         self.val_metrics.reset()
         self.val_confusion.reset()
         self.last_val_result = None
+        self.val_visual_samples.clear()
 
     def validation_step(
         self,
@@ -319,6 +339,20 @@ class CascadeRCNNLightningModule(L.LightningModule):
         detections, _ = self.detector(images)
         self.val_metrics.update(detections, targets)
         self.val_confusion.update(detections, targets)
+
+        if len(self.val_visual_samples) < self.max_visual_samples:
+            for img, det, tgt in zip(images, detections, targets, strict=True):
+                if len(self.val_visual_samples) >= self.max_visual_samples:
+                    break
+                # Prioriza patches com lesão real ou com predição para inspeção visual útil
+                if tgt["boxes"].numel() > 0 or det["boxes"].numel() > 0:
+                    self.val_visual_samples.append(
+                        (
+                            img.detach().cpu(),
+                            {k: v.detach().cpu() for k, v in det.items()},
+                            {k: v.detach().cpu() for k, v in tgt.items()},
+                        )
+                    )
 
     def on_validation_epoch_end(self) -> None:
         result = self.val_metrics.compute()
@@ -338,12 +372,49 @@ class CascadeRCNNLightningModule(L.LightningModule):
         self.log("val/conf_at_recall_90", clinical["conf"])
         self.log("val/precision_at_recall_90", clinical["precision"])
 
+        if not self.trainer.sanity_checking:
+            logger.info(
+                "Epoch %d | mAP50=%.4f | mAP=%.4f | F1=%.4f (P=%.3f R=%.3f @conf=%.2f) | bg_fp=%d missed=%d",
+                self.current_epoch,
+                result["mAP50"],
+                result["mAP50-95"],
+                result["f1"],
+                result["precision"],
+                result["recall"],
+                result["best_conf"],
+                self.val_confusion.background_fp,
+                self.val_confusion.missed,
+            )
+
+    def _build_param_groups(self) -> list[dict[str, Any]]:
+        """Separa LR menor para o backbone ConvNeXt pré-treinado e exclui biases/norms do weight decay."""
+        backbone_decay: list[torch.nn.Parameter] = []
+        backbone_no_decay: list[torch.nn.Parameter] = []
+        head_decay: list[torch.nn.Parameter] = []
+        head_no_decay: list[torch.nn.Parameter] = []
+
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            is_backbone = name.startswith("detector.backbone.body.")
+            no_decay = param.ndim <= 1 or name.endswith(".bias") or "norm" in name.lower()
+
+            if is_backbone:
+                (backbone_no_decay if no_decay else backbone_decay).append(param)
+            else:
+                (head_no_decay if no_decay else head_decay).append(param)
+
+        backbone_lr = self.learning_rate * self.backbone_lr_scale
+        groups = [
+            {"params": backbone_decay, "lr": backbone_lr, "weight_decay": self.weight_decay},
+            {"params": backbone_no_decay, "lr": backbone_lr, "weight_decay": 0.0},
+            {"params": head_decay, "lr": self.learning_rate, "weight_decay": self.weight_decay},
+            {"params": head_no_decay, "lr": self.learning_rate, "weight_decay": 0.0},
+        ]
+        return [g for g in groups if g["params"]]
+
     def configure_optimizers(self) -> dict[str, Any]:
-        optimizer = torch.optim.AdamW(
-            self.parameters(),
-            lr=self.learning_rate,
-            weight_decay=self.weight_decay,
-        )
+        optimizer = torch.optim.AdamW(self._build_param_groups())
         total_steps = int(self.trainer.estimated_stepping_batches)
         if total_steps <= 1:
             return {"optimizer": optimizer}

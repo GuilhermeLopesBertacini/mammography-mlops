@@ -30,6 +30,7 @@ class TimmFPNBackbone(nn.Module):
         out_channels: int = 256,
         norm_type: str = "group_norm",
         num_groups: int = 32,
+        drop_path_rate: float = 0.2,
     ) -> None:
         super().__init__()
         self.body = timm.create_model(
@@ -37,6 +38,7 @@ class TimmFPNBackbone(nn.Module):
             pretrained=pretrained,
             features_only=True,
             out_indices=(0, 1, 2, 3),
+            drop_path_rate=drop_path_rate,
         )
         in_channels_list: list[int] = self.body.feature_info.channels()
         self.fpn = FeaturePyramidNetwork(

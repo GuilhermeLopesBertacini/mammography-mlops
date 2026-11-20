@@ -65,11 +65,14 @@ class ModelConfig(_StrictBaseConfig):
     num_classes: int = Field(ge=2)
     backbone_name: str = Field(min_length=1)
     pretrained: bool = True
+    drop_path_rate: float = Field(default=0.2, ge=0.0, lt=1.0)
     fpn_out_channels: int = Field(ge=64)
     cascade_iou_thresholds: tuple[float, ...] = (0.5, 0.6, 0.7)
+    stage_loss_weights: tuple[float, ...] = (1.0, 0.5, 0.25)
     norm_type: Literal["group_norm", "layer_norm", "none"] = "group_norm"
     num_groups: int = Field(ge=1)
     learning_rate: float = Field(gt=0.0, lt=1.0)
+    backbone_lr_scale: float = Field(default=0.2, gt=0.0, le=1.0)
     weight_decay: float = Field(ge=0.0, lt=1.0)
     warmup_epochs: int = Field(ge=0)
 
@@ -85,10 +88,14 @@ class ModelConfig(_StrictBaseConfig):
         return value
 
     @model_validator(mode="after")
-    def _validate_group_norm_divisibility(self) -> "ModelConfig":
+    def _validate_model_invariants(self) -> "ModelConfig":
         if self.norm_type == "group_norm" and self.fpn_out_channels % self.num_groups != 0:
             raise ValueError(
                 f"fpn_out_channels ({self.fpn_out_channels}) deve ser divisível por num_groups ({self.num_groups})."
+            )
+        if len(self.stage_loss_weights) != len(self.cascade_iou_thresholds):
+            raise ValueError(
+                "stage_loss_weights deve ter o mesmo comprimento de cascade_iou_thresholds."
             )
         return self
 
@@ -104,6 +111,7 @@ class TrainerConfig(_StrictBaseConfig):
     max_epochs: int = Field(ge=1)
     gradient_clip_val: float = Field(ge=0.0)
     log_every_n_steps: int = Field(ge=1)
+    ckpt_path: str | None = None
 
     @property
     def effective_batch_size(self) -> int:

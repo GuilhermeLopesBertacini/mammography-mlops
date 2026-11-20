@@ -1,8 +1,9 @@
-"""Callback Lightning para logging de curvas, matriz de confusão e relatório no MLflow."""
+"""Callback Lightning para logging de curvas, matriz, visualizações TP/FP/FN e relatório no MLflow."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -10,7 +11,10 @@ from typing import Any
 import lightning as L
 import matplotlib
 import numpy as np
+import torch
+from torchvision.ops import box_iou
 
+from src.infrastructure.datasets.vindr_datamodule import IMAGENET_MEAN, IMAGENET_STD
 from src.infrastructure.evaluation.detection_metrics import (
     ConfusionMatrix,
     clinical_operating_point,
@@ -19,6 +23,8 @@ from src.infrastructure.evaluation.detection_metrics import (
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+logger = logging.getLogger(__name__)
 
 
 def detection_findings(
@@ -55,9 +61,95 @@ def detection_findings(
         )
         if bg_fp > max(10, 2 * missed):
             findings.append(
-                "Alerta: excesso de falsos positivos no fundo — avalie elevar score_thresh ou aumentar razão de patches negativos."
+                "Alerta: excesso de falsos positivos no fundo — avalie elevar score_thresh ou ajustar razão pos:neg."
             )
     return findings
+
+
+def _denormalize_clahe_gray(image_tensor: torch.Tensor) -> np.ndarray:
+    """Extrai o canal CLAHE suave (canal 1) desnormalizado para visualização radiológica limpa."""
+    ch1 = image_tensor[1].detach().cpu().float().numpy()
+    restored = ch1 * IMAGENET_STD[1] + IMAGENET_MEAN[1]
+    return np.clip(restored * 255.0, 0, 255).astype(np.uint8)
+
+
+def render_predictions_grid(
+    output_dir: Path,
+    samples: Sequence[tuple[torch.Tensor, dict[str, torch.Tensor], dict[str, torch.Tensor]]],
+    conf_thresh: float,
+    epoch: int,
+    iou_thresh: float = 0.50,
+) -> Path | None:
+    """Renderiza grid TP (verde) / FP (vermelho) / FN (amarelo tracejado) sobre patches de validação."""
+    if not samples:
+        return None
+
+    n = len(samples)
+    cols = min(3, n)
+    rows = (n + cols - 1) // cols
+    fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 5 * rows))
+    axes_list = np.atleast_1d(axes).ravel()
+
+    for ax, (img, det, tgt) in zip(axes_list, samples, strict=False):
+        gray = _denormalize_clahe_gray(img)
+        ax.imshow(gray, cmap="gray")
+
+        gt_boxes = tgt["boxes"].detach().cpu()
+        scores = det["scores"].detach().cpu()
+        keep = scores >= max(0.05, conf_thresh)
+        pred_boxes = det["boxes"].detach().cpu()[keep]
+        pred_scores = scores[keep]
+
+        matched_gt: set[int] = set()
+        matched_pred: set[int] = set()
+        if gt_boxes.numel() > 0 and pred_boxes.numel() > 0:
+            iou = box_iou(gt_boxes, pred_boxes).numpy()
+            matches = np.array(np.nonzero(iou >= iou_thresh)).T
+            if matches.shape[0] > 1:
+                matches = matches[iou[matches[:, 0], matches[:, 1]].argsort()[::-1]]
+                matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
+                matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
+            matched_gt = set(matches[:, 0].tolist()) if matches.size else set()
+            matched_pred = set(matches[:, 1].tolist()) if matches.size else set()
+
+        # FN (amarelo tracejado) e GT casado (azul fino)
+        for idx, box in enumerate(gt_boxes.tolist()):
+            x1, y1, x2, y2 = box
+            if idx not in matched_gt:
+                rect = plt.Rectangle(
+                    (x1, y1), x2 - x1, y2 - y1, fill=False, edgecolor="yellow", lw=2, ls="--"
+                )
+                ax.add_patch(rect)
+
+        # TP (verde) e FP (vermelho)
+        for idx, (box, sc) in enumerate(zip(pred_boxes.tolist(), pred_scores.tolist(), strict=True)):
+            x1, y1, x2, y2 = box
+            is_tp = idx in matched_pred
+            color = "lime" if is_tp else "red"
+            tag = "TP" if is_tp else "FP"
+            rect = plt.Rectangle((x1, y1), x2 - x1, y2 - y1, fill=False, edgecolor=color, lw=2)
+            ax.add_patch(rect)
+            ax.text(
+                x1,
+                max(10.0, y1 - 4.0),
+                f"{tag} {sc:.2f}",
+                color=color,
+                fontsize=8,
+                bbox={"facecolor": "black", "alpha": 0.5, "pad": 1},
+            )
+
+        ax.set_title(f"GT={len(gt_boxes)} | TP={len(matched_pred)} | FP={len(pred_boxes) - len(matched_pred)}")
+        ax.axis("off")
+
+    for ax in axes_list[n:]:
+        ax.axis("off")
+
+    fig.suptitle(f"Validation TP (green) / FP (red) / FN (yellow) — Epoch {epoch} (conf>={max(0.05, conf_thresh):.2f})")
+    vis_path = output_dir / f"val_predictions_epoch_{epoch:03d}.png"
+    fig.tight_layout()
+    fig.savefig(vis_path, dpi=150)
+    plt.close(fig)
+    return vis_path
 
 
 def render_detection_artifacts(
@@ -66,8 +158,11 @@ def render_detection_artifacts(
     confusion: ConfusionMatrix,
     class_names: list[str],
     epoch: int,
+    visual_samples: Sequence[
+        tuple[torch.Tensor, dict[str, torch.Tensor], dict[str, torch.Tensor]]
+    ] = (),
 ) -> list[Path]:
-    """Renderiza PR curve, confidence curves, matriz de confusão e relatório .md em disco."""
+    """Renderiza PR curve, confidence curves, matriz de confusão, visualizações e relatório .md."""
     output_dir.mkdir(parents=True, exist_ok=True)
     artifacts: list[Path] = []
     curves = result.get("curves")
@@ -97,7 +192,9 @@ def render_detection_artifacts(
         ax.plot(x_conf, np.mean(curves["p_curve"], axis=0), label="Precision")
         ax.plot(x_conf, np.mean(curves["r_curve"], axis=0), label="Recall")
         ax.plot(x_conf, np.mean(curves["f1_curve"], axis=0), lw=2, label="F1")
-        ax.axvline(result["best_conf"], ls="--", color="gray", label=f"best_conf={result['best_conf']:.2f}")
+        ax.axvline(
+            result["best_conf"], ls="--", color="gray", label=f"best_conf={result['best_conf']:.2f}"
+        )
         ax.set_xlabel("Confidence")
         ax.set_ylabel("Score")
         ax.set_title(f"Confidence Curves (Epoch {epoch})")
@@ -130,10 +227,25 @@ def render_detection_artifacts(
     plt.close(fig)
     artifacts.append(cm_path)
 
-    # 4. Markdown Report
+    # 4. TP / FP / FN Visual Predictions Grid
+    vis_path = render_predictions_grid(
+        output_dir=output_dir,
+        samples=visual_samples,
+        conf_thresh=float(result.get("best_conf", 0.25) or 0.25),
+        epoch=epoch,
+    )
+    if vis_path is not None:
+        artifacts.append(vis_path)
+
+    # 5. Markdown Report
     findings = detection_findings(result, confusion)
     report_path = output_dir / f"val_report_epoch_{epoch:03d}.md"
-    report_lines = [f"# Validation Report — Epoch {epoch}", "", "## Findings", *[f"- {f}" for f in findings]]
+    report_lines = [
+        f"# Validation Report — Epoch {epoch}",
+        "",
+        "## Findings",
+        *[f"- {f}" for f in findings],
+    ]
     report_path.write_text("\n".join(report_lines), encoding="utf-8")
     artifacts.append(report_path)
 
@@ -141,9 +253,10 @@ def render_detection_artifacts(
 
 
 class DetectionReportCallback(L.Callback):
-    """Renderiza e envia curvas, matriz de confusão e relatório para o MLflow."""
+    """Renderiza e envia curvas, matriz, visualizações e relatório ao MLflow (com tolerância a falhas)."""
 
-    def on_validation_epoch_end(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
+    def on_validation_end(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
+        """Executa após LightningModule.on_validation_epoch_end para garantir last_val_result preenchido."""
         if trainer.sanity_checking or not trainer.is_global_zero:
             return
         result = getattr(pl_module, "last_val_result", None)
@@ -151,11 +264,13 @@ class DetectionReportCallback(L.Callback):
         if result is None or confusion is None:
             return
 
-        logger = trainer.logger
-        if logger is None or not hasattr(logger, "experiment") or not hasattr(logger, "run_id"):
+        mlf_logger = trainer.logger
+        if mlf_logger is None or not hasattr(mlf_logger, "experiment") or not hasattr(mlf_logger, "run_id"):
             return
 
         class_names = getattr(pl_module.val_metrics, "class_names", ["lesion"])
+        visual_samples = getattr(pl_module, "val_visual_samples", ())
+
         with TemporaryDirectory() as tmp_dir:
             artifacts = render_detection_artifacts(
                 output_dir=Path(tmp_dir),
@@ -163,7 +278,18 @@ class DetectionReportCallback(L.Callback):
                 confusion=confusion,
                 class_names=class_names,
                 epoch=trainer.current_epoch,
+                visual_samples=visual_samples,
             )
             for path in artifacts:
-                sub = "detection/reports" if path.suffix == ".md" else "detection/plots"
-                logger.experiment.log_artifact(logger.run_id, str(path), artifact_path=sub)
+                if path.suffix == ".md":
+                    sub = "detection/reports"
+                elif path.name.startswith("val_predictions"):
+                    sub = "detection/visualizations"
+                else:
+                    sub = "detection/plots"
+                try:
+                    mlf_logger.experiment.log_artifact(
+                        mlf_logger.run_id, str(path), artifact_path=sub
+                    )
+                except Exception as exc:  # noqa: BLE001 - tolerância a falhas de rede/MLflow
+                    logger.warning("Falha ao enviar artefato %s ao MLflow: %s", path.name, exc)

@@ -1,5 +1,5 @@
 experiment_name: vindr-mammo-cascade-convnext
-run_name: null
+run_name: ${now:%Y-%m-%d_%H-%M-%S}
 log_model: true
 tags:
   dataset: vindr-mammo

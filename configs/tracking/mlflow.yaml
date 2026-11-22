@@ -1,6 +1,6 @@
 experiment_name: vindr-mammo-cascade-convnext
 run_name: null
-log_model: false
+log_model: true
 tags:
   dataset: vindr-mammo
   task: binary-lesion-detection

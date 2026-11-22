@@ -93,6 +93,7 @@ def test_lightning_trainer_fast_dev_run_and_report_callback_logs_artifacts(tmp_p
     model = _build_tiny_module()
 
     logged: list[tuple[str, str]] = []
+    metric_logs: list[tuple[int | None, dict[str, float]]] = []
 
     class _FakeExperiment:
         def log_artifact(self, run_id: str, local_path: str, artifact_path: str | None = None) -> None:
@@ -119,7 +120,7 @@ def test_lightning_trainer_fast_dev_run_and_report_callback_logs_artifacts(tmp_p
             pass
 
         def log_metrics(self, metrics, step=None) -> None:
-            pass
+            metric_logs.append((step, dict(metrics)))
 
     trainer = L.Trainer(
         accelerator="cpu",
@@ -137,3 +138,9 @@ def test_lightning_trainer_fast_dev_run_and_report_callback_logs_artifacts(tmp_p
     assert any(n.startswith("confusion_matrix_") for n in artifact_names)
     assert any(n.startswith("val_report_") for n in artifact_names)
     assert any(n.startswith("val_predictions_") for n in artifact_names)
+
+    # Verifica eixo X = época (step == 0) e conjunto enxuto de métricas
+    assert all(step == 0 for step, _ in metric_logs)
+    logged_keys = {k for _, m in metric_logs for k in m}
+    assert {"train/loss", "train/lr", "val/map_50", "val/map", "val/f1", "val/background_fp", "val/missed"} <= logged_keys
+    assert not any(k.startswith(("train/stage_", "lr-AdamW")) for k in logged_keys)

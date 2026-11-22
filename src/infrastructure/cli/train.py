@@ -9,7 +9,7 @@ from typing import Any
 
 import hydra
 import lightning as L
-from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
+from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import MLFlowLogger
 from omegaconf import DictConfig, OmegaConf
 
@@ -129,7 +129,6 @@ def main(cfg: DictConfig) -> None:
             filename="cascade-ep{epoch:02d}",
         ),
         EarlyStopping(monitor="val/map_50", mode="max", patience=6),
-        LearningRateMonitor(logging_interval="step"),
         DetectionReportCallback(),
     ]
 

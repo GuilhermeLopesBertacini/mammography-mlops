@@ -20,7 +20,6 @@ from torchvision.ops import boxes as box_ops
 from src.infrastructure.evaluation.detection_metrics import (
     ConfusionMatrix,
     DetectionMetrics,
-    clinical_operating_point,
 )
 from src.infrastructure.models.backbone import TimmFPNBackbone
 
@@ -319,10 +318,25 @@ class CascadeRCNNLightningModule(L.LightningModule):
         assert isinstance(total_loss, torch.Tensor)
 
         batch_size = len(images)
-        self.log("train/loss", total_loss, prog_bar=True, batch_size=batch_size)
-        for key, val in loss_dict.items():
-            self.log(f"train/{key}", val, batch_size=batch_size)
+        self.log(
+            "train/loss",
+            total_loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            batch_size=batch_size,
+        )
+        self.log("step", float(self.current_epoch), on_step=False, on_epoch=True, batch_size=batch_size)
         return total_loss
+
+    def on_train_epoch_end(self) -> None:
+        opt = self.optimizers()
+        if isinstance(opt, list):
+            opt = opt[0]
+        # Loga apenas o LR principal das cabeças (backbone segue proporcionalmente via backbone_lr_scale)
+        head_lr = float(opt.param_groups[-1]["lr"])
+        self.log("train/lr", head_lr, on_step=False, on_epoch=True)
+        self.log("step", float(self.current_epoch), on_step=False, on_epoch=True)
 
     def on_validation_epoch_start(self) -> None:
         self.val_metrics.reset()
@@ -357,20 +371,16 @@ class CascadeRCNNLightningModule(L.LightningModule):
     def on_validation_epoch_end(self) -> None:
         result = self.val_metrics.compute()
         self.last_val_result = result
-        clinical = clinical_operating_point(result, min_recall=0.90)
 
-        self.log("val/map", result["mAP50-95"], prog_bar=True)
+        self.log("step", float(self.current_epoch))
         self.log("val/map_50", result["mAP50"], prog_bar=True)
-        self.log("val/map_75", result["mAP75"])
+        self.log("val/map", result["mAP50-95"], prog_bar=True)
+        self.log("val/f1", result["f1"], prog_bar=True)
         self.log("val/precision", result["precision"])
         self.log("val/recall", result["recall"])
-        self.log("val/f1", result["f1"], prog_bar=True)
         self.log("val/best_conf", result["best_conf"])
-        self.log("val/fp_per_image", result["fp_per_image"])
         self.log("val/background_fp", float(self.val_confusion.background_fp))
         self.log("val/missed", float(self.val_confusion.missed))
-        self.log("val/conf_at_recall_90", clinical["conf"])
-        self.log("val/precision_at_recall_90", clinical["precision"])
 
         if not self.trainer.sanity_checking:
             logger.info(

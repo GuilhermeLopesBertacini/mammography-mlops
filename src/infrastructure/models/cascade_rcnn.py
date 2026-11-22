@@ -204,7 +204,7 @@ class CascadeRCNNDetector(nn.Module):
         )
 
         anchor_generator = AnchorGenerator(
-            sizes=((16, 32), (32, 64), (64, 128), (128, 256), (256, 512)),
+            sizes=((12, 24), (24, 48), (48, 96), (96, 192), (192, 384)),
             aspect_ratios=((0.5, 1.0, 2.0),) * 5,
         )
         rpn_head = RPNHead(
@@ -218,8 +218,8 @@ class CascadeRCNNDetector(nn.Module):
             bg_iou_thresh=0.3,
             batch_size_per_image=256,
             positive_fraction=0.5,
-            pre_nms_top_n={"training": 2000, "testing": 1000},
-            post_nms_top_n={"training": 2000, "testing": 1000},
+            pre_nms_top_n={"training": 2000, "testing": 2000},
+            post_nms_top_n={"training": 2000, "testing": 2000},
             nms_thresh=0.7,
         )
 
@@ -268,7 +268,7 @@ class CascadeRCNNLightningModule(L.LightningModule):
         cascade_iou_thresholds: tuple[float, ...] = (0.5, 0.6, 0.7),
         stage_loss_weights: tuple[float, ...] = (1.0, 0.5, 0.25),
         learning_rate: float = 1e-4,
-        backbone_lr_scale: float = 0.2,
+        backbone_lr_scale: float = 0.5,
         weight_decay: float = 0.05,
         warmup_epochs: int = 1,
         image_size: int = 1024,

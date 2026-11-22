@@ -128,7 +128,7 @@ def main(cfg: DictConfig) -> None:
             auto_insert_metric_name=False,
             filename="cascade-ep{epoch:02d}",
         ),
-        EarlyStopping(monitor="val/map_50", mode="max", patience=6),
+        EarlyStopping(monitor="val/map_50", mode="max", patience=10),
         DetectionReportCallback(),
     ]
 

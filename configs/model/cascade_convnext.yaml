@@ -17,6 +17,6 @@ stage_loss_weights:
 norm_type: group_norm
 num_groups: 32
 learning_rate: 1.0e-4
-backbone_lr_scale: 0.2
+backbone_lr_scale: 0.5
 weight_decay: 0.05
 warmup_epochs: 1

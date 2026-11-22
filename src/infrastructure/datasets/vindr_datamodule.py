@@ -18,17 +18,25 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
 def build_train_transforms() -> A.Compose:
-    """Pipeline conservador de augmentation para mamografia com preservação de bboxes."""
+    """Pipeline conservador e regularizado de augmentation para mamografia."""
     return A.Compose(
         [
             A.HorizontalFlip(p=0.5),
             A.Affine(
-                scale=(0.95, 1.05),
-                translate_percent=(-0.03, 0.03),
-                rotate=(-7.0, 7.0),
-                p=0.5,
+                scale=(0.85, 1.15),
+                translate_percent=(-0.05, 0.05),
+                rotate=(-15.0, 15.0),
+                p=0.6,
             ),
-            A.RandomBrightnessContrast(brightness_limit=0.1, contrast_limit=0.1, p=0.4),
+            A.RandomBrightnessContrast(brightness_limit=0.15, contrast_limit=0.15, p=0.5),
+            A.RandomGamma(gamma_limit=(85, 115), p=0.3),
+            A.CoarseDropout(
+                num_holes_range=(1, 4),
+                hole_height_range=(16, 48),
+                hole_width_range=(16, 48),
+                fill=0,
+                p=0.3,
+            ),
             A.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
             ToTensorV2(),
         ],

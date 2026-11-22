@@ -75,8 +75,8 @@ def test_differential_lr_param_groups() -> None:
     groups = model._build_param_groups()
     lrs = {round(g["lr"], 8) for g in groups}
     wds = {round(g["weight_decay"], 8) for g in groups}
-    # Backbone tem LR reduzido (0.2x = 2e-5) e heads mantêm 1e-4; norms/biases têm wd=0.0
-    assert lrs == {2e-5, 1e-4}
+    # Backbone tem LR reduzido (0.5x = 5e-5) e heads mantêm 1e-4; norms/biases têm wd=0.0
+    assert lrs == {5e-5, 1e-4}
     assert 0.0 in wds and 0.05 in wds
 
 
